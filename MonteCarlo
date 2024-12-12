@@ -1,0 +1,378 @@
+import React, { useState } from 'react';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ArrowLeftIcon, ArrowRightIcon, RefreshCw } from 'lucide-react';
+
+const MonteCarlo = () => {
+  const [params, setParams] = useState({
+    currentPopulation: 1000,
+    currentVacantLand: 100,
+    minPopChange: 0,
+    maxPopChange: 100,
+    minHouseholdSize: 2,
+    maxHouseholdSize: 4,
+    minDensity: 4,
+    maxDensity: 12,
+  });
+
+  const [results, setResults] = useState(null);
+  const [histogramData, setHistogramData] = useState([]);
+  const [scenarios, setScenarios] = useState([]);
+  const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
+
+  const getRandomBetween = (min, max) => {
+    return min + Math.random() * (max - min);
+  };
+
+  // Helper to round up acres
+  const roundUpAcres = (acres) => Math.ceil(acres * 100) / 100;
+
+  const createHistogram = (data, bins = 20) => {
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min;
+    const binWidth = range / bins;
+
+    const histogramBins = Array(bins).fill(0).map((_, index) => ({
+      binStart: min + index * binWidth,
+      binEnd: min + (index + 1) * binWidth,
+      count: 0
+    }));
+    
+    data.forEach(value => {
+      const binIndex = Math.min(Math.floor((value - min) / binWidth), bins - 1);
+      histogramBins[binIndex].count++;
+    });
+
+    return histogramBins.map(bin => ({
+      binRange: `${bin.binStart.toFixed(1)}-${bin.binEnd.toFixed(1)}`,
+      binStart: bin.binStart,
+      count: bin.count
+    }));
+  };
+
+  const calculateSingleScenario = () => {
+    const popChangePercent = getRandomBetween(params.minPopChange, params.maxPopChange) / 100;
+    const populationIncrease = Math.round(params.currentPopulation * popChangePercent);
+    const householdSize = getRandomBetween(params.minHouseholdSize, params.maxHouseholdSize);
+    const newHouseholdsNeeded = Math.ceil(populationIncrease / householdSize);
+    const density = getRandomBetween(params.minDensity, params.maxDensity);
+    const newAcresNeeded = roundUpAcres(newHouseholdsNeeded / density);
+
+    return {
+      popChangePercent,
+      populationIncrease,
+      householdSize,
+      newHouseholdsNeeded,
+      density,
+      newAcresNeeded
+    };
+  };
+
+  const calculateExceedanceRate = (acreageResults, vacantLand) => {
+    const exceedingScenarios = acreageResults.filter(acres => acres > vacantLand).length;
+    return (exceedingScenarios / acreageResults.length * 100).toFixed(1);
+  };
+
+  const runSimulation = () => {
+    const scenarioCount = 10000;
+    const allScenarios = [];
+    const acreageResults = [];
+
+    for (let i = 0; i < scenarioCount; i++) {
+      const scenario = calculateSingleScenario();
+      acreageResults.push(scenario.newAcresNeeded);
+      allScenarios.push(scenario);
+    }
+
+    acreageResults.sort((a, b) => a - b);
+    const mean = roundUpAcres(acreageResults.reduce((sum, val) => sum + val, 0) / scenarioCount);
+    const percentileIndex = Math.floor(scenarioCount * 0.9);
+    const percentile90 = roundUpAcres(acreageResults[percentileIndex]);
+    const exceedanceRate = calculateExceedanceRate(acreageResults, params.currentVacantLand);
+    const histData = createHistogram(acreageResults);
+
+    setResults({
+      mean,
+      percentile90,
+      exceedanceRate,
+      totalScenarios: scenarioCount
+    });
+    setHistogramData(histData);
+    setScenarios(allScenarios);
+    setCurrentScenarioIndex(0);
+  };
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setParams(prev => ({
+      ...prev,
+      [name]: parseFloat(value) || 0
+    }));
+  };
+
+  const viewNextScenario = () => {
+    setCurrentScenarioIndex(prev => 
+      prev < scenarios.length - 1 ? prev + 1 : 0
+    );
+  };
+
+  const viewPreviousScenario = () => {
+    setCurrentScenarioIndex(prev => 
+      prev > 0 ? prev - 1 : scenarios.length - 1
+    );
+  };
+
+  const viewRandomScenario = () => {
+    setCurrentScenarioIndex(Math.floor(Math.random() * scenarios.length));
+  };
+
+  return (
+    <Card className="w-full max-w-2xl mx-auto">
+      <CardHeader>
+        <CardTitle>Growth-Based Land Need Simulator</CardTitle>
+        <CardDescription>
+          Simulate land requirements based on population growth scenarios
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Current Population</label>
+            <Input
+              type="number"
+              name="currentPopulation"
+              value={params.currentPopulation}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Current Vacant Land (acres)</label>
+            <Input
+              type="number"
+              name="currentVacantLand"
+              value={params.currentVacantLand}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Min Population Change (%)</label>
+            <Input
+              type="number"
+              name="minPopChange"
+              value={params.minPopChange}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Max Population Change (%)</label>
+            <Input
+              type="number"
+              name="maxPopChange"
+              value={params.maxPopChange}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Min Household Size</label>
+            <Input
+              type="number"
+              name="minHouseholdSize"
+              value={params.minHouseholdSize}
+              onChange={handleInputChange}
+              step="0.1"
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Max Household Size</label>
+            <Input
+              type="number"
+              name="maxHouseholdSize"
+              value={params.maxHouseholdSize}
+              onChange={handleInputChange}
+              step="0.1"
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Min Density (units/acre)</label>
+            <Input
+              type="number"
+              name="minDensity"
+              value={params.minDensity}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Max Density (units/acre)</label>
+            <Input
+              type="number"
+              name="maxDensity"
+              value={params.maxDensity}
+              onChange={handleInputChange}
+              className="font-mono"
+            />
+          </div>
+        </div>
+
+        <Button 
+          className="w-full"
+          onClick={runSimulation}
+        >
+          Run Simulation
+        </Button>
+
+        {results && (
+          <>
+            <Alert variant="default">
+              <AlertTitle className="text-lg font-semibold">Summary Results</AlertTitle>
+              <AlertDescription>
+                <div className="mt-2 space-y-2">
+                  <p><span className="font-medium">Mean Additional Acres Needed:</span> {results.mean.toFixed(2)} acres</p>
+                  <p><span className="font-medium">90th Percentile Additional Acres Needed:</span> {results.percentile90.toFixed(2)} acres</p>
+                  <p><span className="font-medium">Scenarios Exceeding Current Vacant Land:</span> {results.exceedanceRate}%</p>
+                  <p className="text-sm text-gray-500">Based on {results.totalScenarios.toLocaleString()} simulated scenarios</p>
+                </div>
+              </AlertDescription>
+            </Alert>
+
+            {scenarios.length > 0 && (
+              <Card className="bg-gray-50">
+                <CardHeader className="pb-2">
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-base">Sample Scenario Details</CardTitle>
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="icon"
+                        onClick={viewPreviousScenario}
+                      >
+                        <ArrowLeftIcon className="h-4 w-4" />
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        size="icon"
+                        onClick={viewRandomScenario}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        size="icon"
+                        onClick={viewNextScenario}
+                      >
+                        <ArrowRightIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <CardDescription className="text-xs">
+                    Scenario {currentScenarioIndex + 1} of {scenarios.length}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 text-sm">
+                    <p><span className="font-medium">Population Growth:</span> {(scenarios[currentScenarioIndex].popChangePercent * 100).toFixed(1)}% (+{scenarios[currentScenarioIndex].populationIncrease.toLocaleString()} people)</p>
+                    <p><span className="font-medium">Average Household Size:</span> {scenarios[currentScenarioIndex].householdSize.toFixed(2)} people per household</p>
+                    <p><span className="font-medium">New Households Needed:</span> {scenarios[currentScenarioIndex].newHouseholdsNeeded.toLocaleString()} households</p>
+                    <p><span className="font-medium">Development Density:</span> {scenarios[currentScenarioIndex].density.toFixed(1)} units per acre</p>
+                    <p><span className="font-medium">Additional Land Needed:</span> {scenarios[currentScenarioIndex].newAcresNeeded.toFixed(2)} acres</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={histogramData}
+                  margin={{
+                    top: 20,
+                    right: 30,
+                    left: 40,
+                    bottom: 20,
+                  }}
+                  barSize={20}
+                >
+                  <XAxis 
+                    dataKey="binStart"
+                    label={{ value: 'Additional Acres Needed', position: 'bottom' }}
+                    tickFormatter={(value) => value.toFixed(0)}
+                    type="number"
+                    domain={['auto', 'auto']}
+                  />
+                  <YAxis 
+                    label={{ 
+                      value: 'Number of Scenarios', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      offset: -20
+                    }}
+                  />
+                  <Tooltip 
+                    formatter={(value, name) => [`${value} scenarios`, 'Frequency']}
+                    labelFormatter={(label) => `Around ${Math.round(label)} acres`}
+                  />
+                  <Bar 
+                    dataKey="count" 
+                    fill="#4f46e5"
+                    name="Scenarios"
+                  />
+                  <ReferenceLine
+                    x={params.currentVacantLand}
+                    stroke="#dc2626"
+                    strokeWidth={2}
+                    label={{
+                      value: 'Current Vacant Land',
+                      position: 'top',
+                      fill: '#dc2626'
+                    }}
+                  />
+                  <ReferenceLine
+                    x={results.percentile90}
+                    stroke="#15803d"
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    label={{
+                      value: '90th Percentile',
+                      position: 'top',
+                      fill: '#15803d'
+                    }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex gap-6 justify-center text-sm">
+              <div className="flex items-center">
+                <div className="w-4 h-0.5 bg-red-600 mr-2"></div>
+                <span>Current Vacant Land</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-4 h-0.5 bg-green-700 mr-2 border-dashed border-t-2"></div>
+                <span>90th Percentile</span>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default MonteCarlo;
