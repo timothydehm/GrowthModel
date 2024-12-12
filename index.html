@@ -3,40 +3,65 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple Growth Simulator</title>
+    <title>Land Need Monte Carlo Simulator</title>
     
-    <!-- Just React and ReactDOM for now -->
+    <!-- Core React -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    
+    <!-- Recharts for visualization -->
+    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
 
     <style>
         .container {
-            max-width: 600px;
+            max-width: 800px;
             margin: 20px auto;
             padding: 20px;
             font-family: Arial, sans-serif;
         }
+        .input-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
         .input-group {
-            margin-bottom: 15px;
+            margin-bottom: 10px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
         }
         input {
             width: 100%;
             padding: 8px;
-            margin-top: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
         button {
-            padding: 10px 20px;
+            width: 100%;
+            padding: 10px;
             background-color: #007bff;
             color: white;
             border: none;
+            border-radius: 4px;
             cursor: pointer;
+            margin-bottom: 20px;
+        }
+        button:hover {
+            background-color: #0056b3;
         }
         .results {
-            margin-top: 20px;
-            padding: 15px;
             background-color: #f8f9fa;
+            padding: 20px;
             border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            height: 300px;
+            margin-top: 20px;
         }
     </style>
 </head>
@@ -44,92 +69,227 @@
     <div id="root"></div>
 
     <script type="text/babel">
+        const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } = Recharts;
+        
         const App = () => {
-            const [inputs, setInputs] = React.useState({
-                population: 1000,
-                growthRate: 10,
-                iterations: 100
+            const [params, setParams] = React.useState({
+                currentPopulation: 1000,
+                currentVacantLand: 100,
+                minPopChange: 0,
+                maxPopChange: 100,
+                minHouseholdSize: 2,
+                maxHouseholdSize: 4,
+                minDensity: 4,
+                maxDensity: 12
             });
             
             const [results, setResults] = React.useState(null);
+            const [histogramData, setHistogramData] = React.useState([]);
 
-            const handleInputChange = (e) => {
-                setInputs({
-                    ...inputs,
-                    [e.target.name]: Number(e.target.value)
+            const getRandomBetween = (min, max) => {
+                return min + Math.random() * (max - min);
+            };
+
+            const createHistogram = (data, bins = 20) => {
+                const min = Math.min(...data);
+                const max = Math.max(...data);
+                const range = max - min;
+                const binWidth = range / bins;
+
+                const histogram = Array(bins).fill(0).map((_, index) => ({
+                    binStart: min + index * binWidth,
+                    binEnd: min + (index + 1) * binWidth,
+                    count: 0
+                }));
+
+                data.forEach(value => {
+                    const binIndex = Math.min(Math.floor((value - min) / binWidth), bins - 1);
+                    histogram[binIndex].count++;
                 });
+
+                return histogram.map(bin => ({
+                    binRange: `${bin.binStart.toFixed(1)}-${bin.binEnd.toFixed(1)}`,
+                    binStart: bin.binStart,
+                    count: bin.count
+                }));
             };
 
             const runSimulation = () => {
                 const scenarios = [];
-                
-                for (let i = 0; i < inputs.iterations; i++) {
-                    const growth = inputs.population * (inputs.growthRate/100);
-                    const randomGrowth = growth * (0.5 + Math.random());
-                    scenarios.push(Math.round(randomGrowth));
+                const ITERATIONS = 10000;
+
+                for (let i = 0; i < ITERATIONS; i++) {
+                    // Calculate population change
+                    const popChangePercent = getRandomBetween(params.minPopChange, params.maxPopChange) / 100;
+                    const populationIncrease = Math.round(params.currentPopulation * popChangePercent);
+                    
+                    // Calculate households needed
+                    const householdSize = getRandomBetween(params.minHouseholdSize, params.maxHouseholdSize);
+                    const newHouseholdsNeeded = Math.ceil(populationIncrease / householdSize);
+                    
+                    // Calculate land needed
+                    const density = getRandomBetween(params.minDensity, params.maxDensity);
+                    const newAcresNeeded = Math.ceil((newHouseholdsNeeded / density) * 100) / 100;
+                    
+                    scenarios.push(newAcresNeeded);
                 }
 
-                const average = Math.round(
-                    scenarios.reduce((a, b) => a + b, 0) / scenarios.length
-                );
+                // Sort for percentile calculation
+                scenarios.sort((a, b) => a - b);
+                
+                // Calculate statistics
+                const mean = scenarios.reduce((sum, val) => sum + val, 0) / ITERATIONS;
+                const percentile90Index = Math.floor(ITERATIONS * 0.9);
+                const percentile90 = scenarios[percentile90Index];
+                const exceedanceRate = (scenarios.filter(acres => acres > params.currentVacantLand).length / ITERATIONS * 100).toFixed(1);
 
                 setResults({
-                    average,
-                    min: Math.round(Math.min(...scenarios)),
-                    max: Math.round(Math.max(...scenarios))
+                    mean: Math.round(mean * 100) / 100,
+                    percentile90: Math.round(percentile90 * 100) / 100,
+                    exceedanceRate,
+                    totalScenarios: ITERATIONS
                 });
+
+                setHistogramData(createHistogram(scenarios));
+            };
+
+            const handleInputChange = (e) => {
+                setParams(prev => ({
+                    ...prev,
+                    [e.target.name]: parseFloat(e.target.value) || 0
+                }));
             };
 
             return (
                 <div className="container">
-                    <h1>Growth Simulator</h1>
+                    <h1>Land Need Monte Carlo Simulator</h1>
                     
-                    <div className="input-group">
-                        <label>
-                            Current Population:
-                            <input 
-                                type="number" 
-                                name="population"
-                                value={inputs.population}
+                    <div className="input-grid">
+                        <div className="input-group">
+                            <label>Current Population</label>
+                            <input
+                                type="number"
+                                name="currentPopulation"
+                                value={params.currentPopulation}
                                 onChange={handleInputChange}
                             />
-                        </label>
-                    </div>
+                        </div>
 
-                    <div className="input-group">
-                        <label>
-                            Growth Rate (%):
-                            <input 
-                                type="number" 
-                                name="growthRate"
-                                value={inputs.growthRate}
+                        <div className="input-group">
+                            <label>Current Vacant Land (acres)</label>
+                            <input
+                                type="number"
+                                name="currentVacantLand"
+                                value={params.currentVacantLand}
                                 onChange={handleInputChange}
                             />
-                        </label>
-                    </div>
+                        </div>
 
-                    <div className="input-group">
-                        <label>
-                            Number of Scenarios:
-                            <input 
-                                type="number" 
-                                name="iterations"
-                                value={inputs.iterations}
+                        <div className="input-group">
+                            <label>Min Population Change (%)</label>
+                            <input
+                                type="number"
+                                name="minPopChange"
+                                value={params.minPopChange}
                                 onChange={handleInputChange}
                             />
-                        </label>
+                        </div>
+
+                        <div className="input-group">
+                            <label>Max Population Change (%)</label>
+                            <input
+                                type="number"
+                                name="maxPopChange"
+                                value={params.maxPopChange}
+                                onChange={handleInputChange}
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label>Min Household Size</label>
+                            <input
+                                type="number"
+                                name="minHouseholdSize"
+                                value={params.minHouseholdSize}
+                                onChange={handleInputChange}
+                                step="0.1"
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label>Max Household Size</label>
+                            <input
+                                type="number"
+                                name="maxHouseholdSize"
+                                value={params.maxHouseholdSize}
+                                onChange={handleInputChange}
+                                step="0.1"
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label>Min Density (units/acre)</label>
+                            <input
+                                type="number"
+                                name="minDensity"
+                                value={params.minDensity}
+                                onChange={handleInputChange}
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label>Max Density (units/acre)</label>
+                            <input
+                                type="number"
+                                name="maxDensity"
+                                value={params.maxDensity}
+                                onChange={handleInputChange}
+                            />
+                        </div>
                     </div>
 
                     <button onClick={runSimulation}>
-                        Run Simulation
+                        Run Simulation (10,000 scenarios)
                     </button>
 
                     {results && (
                         <div className="results">
-                            <h2>Results:</h2>
-                            <p>Average Growth: {results.average} people</p>
-                            <p>Minimum Growth: {results.min} people</p>
-                            <p>Maximum Growth: {results.max} people</p>
+                            <h2>Results</h2>
+                            <p><strong>Mean Additional Acres Needed:</strong> {results.mean} acres</p>
+                            <p><strong>90th Percentile Additional Acres Needed:</strong> {results.percentile90} acres</p>
+                            <p><strong>Scenarios Exceeding Current Vacant Land:</strong> {results.exceedanceRate}%</p>
+                            <p><small>Based on {results.totalScenarios.toLocaleString()} simulated scenarios</small></p>
+                            
+                            <div className="chart-container">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart
+                                        data={histogramData}
+                                        margin={{
+                                            top: 20,
+                                            right: 30,
+                                            left: 20,
+                                            bottom: 5,
+                                        }}
+                                    >
+                                        <XAxis
+                                            dataKey="binStart"
+                                            label={{ value: 'Additional Acres Needed', position: 'bottom' }}
+                                        />
+                                        <YAxis
+                                            label={{
+                                                value: 'Number of Scenarios',
+                                                angle: -90,
+                                                position: 'insideLeft'
+                                            }}
+                                        />
+                                        <Tooltip
+                                            formatter={(value) => [`${value} scenarios`, 'Frequency']}
+                                            labelFormatter={(label) => `Around ${Math.round(label)} acres`}
+                                        />
+                                        <Bar dataKey="count" fill="#007bff" />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
                     )}
                 </div>
